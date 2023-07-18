@@ -12,7 +12,8 @@ RUN cp target/x86_64-unknown-linux-musl/release/nft-issue-transaction /binaries
 
 RUN strip --strip-all /binaries/nft-issue-transaction
  
-FROM docker.io/busybox:latest
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
 
 RUN mkdir /service
 WORKDIR /service
