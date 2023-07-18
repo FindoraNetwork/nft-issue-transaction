@@ -311,7 +311,7 @@ fn get_address_and_pub_key(
         })?;
 
     let address = signature
-        .recover_typed_data(Issue {
+        .recover_typed_data(&Issue {
             receive_public_key: fra_pub_key.to_vec(),
         })
         .map_err(|e| (-5, format!("error: {:?}", e)))?;
