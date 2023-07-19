@@ -1,6 +1,7 @@
-swagger_url = "http://127.0.0.1:8888"
+swagger_url = "https://api.zknft.findora.org"
 listen_address = "0.0.0.0"
 listen_port = 8888
-findora_query_url = "https://prod-mainnet.prod.findora.org:8668"
-web3_http_url = "http://127.0.0.1:8545"
-contract_address = "0xbD694Bf489eE062d0b18da456177Ba623dcDEbF9"
+findora_query_url = "https://prod-testnet.prod.findora.org:8668"
+web3_http_url = "https://goerli.infura.io/v3/06fb6ba2d54943cbb52c7d84929b0c28"
+contract_address = "0xF89fC6F1C9595AF8578CafDed71796F3615CB2eF"
+dir_path = "/data"

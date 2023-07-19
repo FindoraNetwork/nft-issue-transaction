@@ -12,6 +12,7 @@ pub struct Config {
     pub findora_query_url: String,
     pub web3_http_url: String,
     pub contract_address: String,
+    pub dir_path: String,
 }
 impl Config {
     pub fn new(path: &str) -> Result<Self> {

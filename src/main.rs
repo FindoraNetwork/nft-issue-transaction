@@ -26,6 +26,7 @@ async fn main() -> Result<()> {
         web3,
         contract_address,
         findora_query_url: config.findora_query_url,
+        dir_path: config.dir_path,
     };
     let api_service = OpenApiService::new(api, "zk-nft", "1.0").server(config.swagger_url);
     let ui = api_service.swagger_ui();

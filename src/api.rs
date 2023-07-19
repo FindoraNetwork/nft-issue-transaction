@@ -18,6 +18,7 @@ use {
     },
     serde::{Deserialize, Serialize},
     serde_json::Value,
+    std::{fs::File, io::Write, time::SystemTime},
     web3::{
         transports::Http,
         types::{Bytes, CallRequest, H160, U256},
@@ -33,6 +34,7 @@ pub struct Api {
     pub web3: Web3<Http>,
     pub contract_address: H160,
     pub findora_query_url: String,
+    pub dir_path: String,
 }
 
 #[derive(Tags)]
@@ -64,6 +66,7 @@ pub struct GetIssueTxReq {
     pub id: String,
     pub receive_public_key: String,
     pub signature: String,
+    pub cusdata: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Object, Clone)]
@@ -132,6 +135,11 @@ impl Api {
                 return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
             }
         };
+        if balance.is_zero() {
+            resp.code = -30;
+            resp.msg = String::from("balance is zero");
+            return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+        }
 
         let mut data = vec![];
         data.extend(address.0);
@@ -139,7 +147,7 @@ impl Api {
         let chain_id = match self.web3.eth().chain_id().await {
             Ok(v) => v,
             Err(e) => {
-                resp.code = -30;
+                resp.code = -40;
                 resp.msg = format!("error: {:?}", e);
                 return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
             }
@@ -150,24 +158,48 @@ impl Api {
         data.extend(&tmp);
         balance.to_big_endian(&mut tmp);
         data.extend(tmp);
+        let time = format!("{:?}", SystemTime::now());
+        data.extend(time.as_bytes());
+        let code = keccak256(data);
 
-        let builder =
-            match create_asset_tx(&self.findora_query_url, &keccak256(data), balance.as_u64()) {
-                Ok(v) => v,
-                Err((code, msg)) => {
-                    resp.code = code;
-                    resp.msg = msg;
-                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
-                }
-            };
+        let builder = match create_asset_tx(&self.findora_query_url, &code, balance.as_u64()) {
+            Ok(v) => v,
+            Err((code, msg)) => {
+                resp.code = code;
+                resp.msg = msg;
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
         resp.msg = match serde_json::to_string(&builder) {
             Ok(v) => v,
             Err(e) => {
-                resp.code = -40;
+                resp.code = -50;
                 resp.msg = format!("error: {:?}", e);
                 return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
             }
         };
+        let mut file = match File::create(format!("{}/{}", self.dir_path, hex::encode(&code))) {
+            Ok(v) => v,
+            Err(e) => {
+                resp.code = -60;
+                resp.msg = format!("save file error: {:?}", e);
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
+        let json = match serde_json::to_string_pretty(&req.0) {
+            Ok(v) => v,
+            Err(e) => {
+                resp.code = -70;
+                resp.msg = format!("save file error: {:?}", e);
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
+        if let Err(e) = file.write_all(json.as_bytes()) {
+            resp.code = -80;
+            resp.msg = format!("save file error: {:?}", e);
+            return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+        };
+
         Ok(GetIssueTxRespEnum::Ok(Json(resp)))
     }
 }
