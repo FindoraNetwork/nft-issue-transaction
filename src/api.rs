@@ -127,7 +127,7 @@ impl Api {
                     return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
                 }
             };
-        let balance = match get_erc_balance(&self.web3, self.contract_address, address).await {
+        let mut balance = match get_erc_balance(&self.web3, self.contract_address, address).await {
             Ok(v) => v,
             Err((code, msg)) => {
                 resp.code = code;
@@ -135,6 +135,9 @@ impl Api {
                 return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
             }
         };
+        if balance > U256::from(u64::MAX) {
+            balance = U256::from(u64::MAX);
+        }
         if balance.is_zero() {
             resp.code = -30;
             resp.msg = String::from("balance is zero");
