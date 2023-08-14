@@ -173,13 +173,13 @@ impl Api {
         let (web3, contract_address) = match self.support_chain.get(&chainid) {
             Some(v) => v,
             None => {
-                resp.code = -30;
+                resp.code = -32;
                 resp.msg = String::from("chain not support");
                 return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
             }
         };
         if !contract_address.contains(&token_address) {
-            resp.code = -31;
+            resp.code = -33;
             resp.msg = String::from("token_address not support");
             return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
         }
@@ -188,7 +188,7 @@ impl Api {
             let tokenid = match U256::from_str(id) {
                 Ok(v) => v,
                 Err(e) => {
-                    resp.code = -32;
+                    resp.code = -35;
                     resp.msg = format!("tokenid format error:{:?}", e);
                     return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
                 }
@@ -215,7 +215,11 @@ impl Api {
         if balance > U256::from(u64::MAX) {
             balance = U256::from(u64::MAX);
         }
-
+        if balance.is_zero() {
+            resp.code = -36;
+            resp.msg = String::from("balance is zero");
+            return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+        }
         let mut data = vec![];
         data.extend(address.0);
         data.extend(token_address.0);
