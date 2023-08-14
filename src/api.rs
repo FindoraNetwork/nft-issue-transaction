@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use {
     anyhow::anyhow,
     ethers::{
@@ -18,7 +20,7 @@ use {
     },
     serde::{Deserialize, Serialize},
     serde_json::Value,
-    std::{fs::File, io::Write, time::SystemTime},
+    std::{collections::HashMap, fs::File, io::Write, time::SystemTime},
     web3::{
         transports::Http,
         types::{Bytes, CallRequest, H160, U256},
@@ -31,9 +33,8 @@ use {
     },
 };
 pub struct Api {
-    pub web3: Web3<Http>,
-    pub contract_address: H160,
     pub findora_query_url: String,
+    pub support_chain: HashMap<U256, (Web3<Http>, Vec<H160>)>,
     pub dir_path: String,
 }
 
@@ -66,7 +67,9 @@ pub struct GetIssueTxReq {
     pub id: String,
     pub receive_public_key: String,
     pub signature: String,
-    pub cusdata: String,
+    pub chainid: String,
+    pub token_address: String,
+    pub tokenid1155: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Object, Clone)]
@@ -80,6 +83,12 @@ pub struct GetIssueTxResp {
 pub enum GetIssueTxRespEnum {
     #[oai(status = 200)]
     Ok(Json<GetIssueTxResp>),
+}
+
+#[derive(ApiResponse)]
+pub enum GetSupportChain {
+    #[oai(status = 200)]
+    Ok(Json<HashMap<String, Vec<String>>>),
 }
 
 #[derive(Eip712, EthAbiType, Clone)]
@@ -108,6 +117,23 @@ impl Api {
     }
 
     #[oai(
+        path = "/get_support_chain",
+        method = "get",
+        tag = "ApiTags::Transaction"
+    )]
+    async fn get_support_chain(&self) -> Result<GetSupportChain> {
+        let mut chain = HashMap::new();
+        for (chainid, (_, contracts)) in self.support_chain.clone() {
+            chain.insert(
+                format!("{:?}", chainid),
+                contracts.iter().map(|v| format!("{:?}", v)).collect(),
+            );
+        }
+
+        Ok(GetSupportChain::Ok(Json(chain)))
+    }
+
+    #[oai(
         path = "/get_issue_transaction",
         method = "post",
         tag = "ApiTags::Transaction"
@@ -127,27 +153,73 @@ impl Api {
                     return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
                 }
             };
-        let mut balance = match get_erc_balance(&self.web3, self.contract_address, address).await {
+        let chainid = match U256::from_str(&req.chainid) {
             Ok(v) => v,
-            Err((code, msg)) => {
-                resp.code = code;
-                resp.msg = msg;
+            Err(e) => {
+                resp.code = -30;
+                resp.msg = format!("chainid format error:{:?}", e);
                 return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
             }
         };
+        let token_address = match H160::from_str(&req.token_address) {
+            Ok(v) => v,
+            Err(e) => {
+                resp.code = -31;
+                resp.msg = format!("token_address format error:{:?}", e);
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
+
+        let (web3, contract_address) = match self.support_chain.get(&chainid) {
+            Some(v) => v,
+            None => {
+                resp.code = -30;
+                resp.msg = String::from("chain not support");
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
+        if !contract_address.contains(&token_address) {
+            resp.code = -31;
+            resp.msg = String::from("token_address not support");
+            return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+        }
+
+        let mut balance = if let Some(id) = &req.tokenid1155 {
+            let tokenid = match U256::from_str(id) {
+                Ok(v) => v,
+                Err(e) => {
+                    resp.code = -32;
+                    resp.msg = format!("tokenid format error:{:?}", e);
+                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+                }
+            };
+            match get_1155_balance(&web3, token_address, address, tokenid).await {
+                Ok(v) => v,
+                Err((code, msg)) => {
+                    resp.code = code;
+                    resp.msg = msg;
+                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+                }
+            }
+        } else {
+            match get_erc_balance(&web3, token_address, address).await {
+                Ok(v) => v,
+                Err((code, msg)) => {
+                    resp.code = code;
+                    resp.msg = msg;
+                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+                }
+            }
+        };
+
         if balance > U256::from(u64::MAX) {
             balance = U256::from(u64::MAX);
-        }
-        if balance.is_zero() {
-            resp.code = -30;
-            resp.msg = String::from("balance is zero");
-            return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
         }
 
         let mut data = vec![];
         data.extend(address.0);
-        data.extend(self.contract_address.0);
-        let chain_id = match self.web3.eth().chain_id().await {
+        data.extend(token_address.0);
+        let chain_id = match web3.eth().chain_id().await {
             Ok(v) => v,
             Err(e) => {
                 resp.code = -40;
@@ -206,6 +278,7 @@ impl Api {
         Ok(GetIssueTxRespEnum::Ok(Json(resp)))
     }
 }
+
 fn create_asset_tx(
     url: &str,
     code: &[u8],
@@ -286,6 +359,68 @@ async fn get_erc_balance(
     };
     let data = function
         .encode_input(&vec![Token::Address(address)])
+        .map_err(|e| (-11, format!("error: {:?}", e)))?;
+
+    let bytes = web3
+        .eth()
+        .call(
+            CallRequest {
+                to: Some(contract_address),
+                data: Some(Bytes(data)),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .map_err(|e| (-12, format!("error: {:?}", e)))?;
+
+    let vts = function
+        .decode_output(&bytes.0)
+        .map_err(|e| (-13, format!("error: {:?}", e)))?;
+
+    let t = vts
+        .get(0)
+        .cloned()
+        .ok_or_else(|| (-14, String::from("balance not found")))?;
+
+    if let Token::Uint(v) = t {
+        Ok(v)
+    } else {
+        Err((-15, String::from("balance return type error")))
+    }
+}
+
+async fn get_1155_balance(
+    web3: &Web3<Http>,
+    contract_address: H160,
+    address: H160,
+    tokenid: U256,
+) -> anyhow::Result<U256, (i32, String)> {
+    #[allow(deprecated)]
+    let function = Function {
+        name: String::from("balanceOf"),
+        inputs: vec![
+            Param {
+                name: String::from("account"),
+                kind: ParamType::Address,
+                internal_type: Some(String::from("address")),
+            },
+            Param {
+                name: String::from("id"),
+                kind: ParamType::Uint(256),
+                internal_type: Some(String::from("uint256")),
+            },
+        ],
+        outputs: vec![Param {
+            name: String::new(),
+            kind: ParamType::Uint(256),
+            internal_type: Some(String::from("uint256")),
+        }],
+        constant: None,
+        state_mutability: StateMutability::Payable,
+    };
+    let data = function
+        .encode_input(&vec![Token::Address(address), Token::Uint(tokenid)])
         .map_err(|e| (-11, format!("error: {:?}", e)))?;
 
     let bytes = web3
