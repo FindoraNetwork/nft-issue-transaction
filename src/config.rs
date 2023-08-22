@@ -11,7 +11,6 @@ pub struct Config {
     pub listen_address: String,
     pub listen_port: u32,
     pub findora_query_url: String,
-    pub dir_path: String,
     pub support_chain: HashMap<String, Vec<H160>>,
 }
 impl Config {

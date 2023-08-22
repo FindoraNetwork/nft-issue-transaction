@@ -20,13 +20,5 @@ WORKDIR /service
 
 COPY --from=builder /binaries/nft-issue-transaction /service/nft-issue-transaction
 
-RUN echo 'swagger_url = "http://127.0.0.1:8888"' >>/service/config.toml
-RUN echo 'listen_address = "0.0.0.0"' >>/service/config.toml
-RUN echo 'listen_port = 8888' >>/service/config.toml
-RUN echo 'findora_query_url = "http://127.0.0.1:8668"' >>/service/config.toml
-RUN echo 'web3_http_url = "http://127.0.0.1:8545"' >>/service/config.toml
-RUN echo 'contract_address = "0xbD694Bf489eE062d0b18da456177Ba623dcDEbF9"' >>/service/config.toml
-RUN echo 'dir_path = "/data"' >>/service/config.toml
-
 ENV CONFIG_FILE_PATH=/service/config.toml
 ENTRYPOINT ["/service/nft-issue-transaction"]

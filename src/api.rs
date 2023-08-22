@@ -20,7 +20,7 @@ use {
     },
     serde::{Deserialize, Serialize},
     serde_json::Value,
-    std::{collections::HashMap, fs::File, io::Write, time::SystemTime},
+    std::{collections::HashMap, time::SystemTime},
     web3::{
         transports::Http,
         types::{Bytes, CallRequest, H160, U256},
@@ -35,7 +35,6 @@ use {
 pub struct Api {
     pub findora_query_url: String,
     pub support_chain: HashMap<U256, (Web3<Http>, Vec<H160>)>,
-    pub dir_path: String,
 }
 
 #[derive(Tags)]
@@ -217,7 +216,10 @@ impl Api {
         }
         if balance.is_zero() {
             resp.code = -36;
-            resp.msg = String::from("balance is zero");
+            resp.msg = format!(
+                "balance is zero account: {:?} chainid:{} contract_address:{:?}",
+                address, chainid, token_address
+            );
             return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
         }
         let mut data = vec![];
@@ -256,27 +258,6 @@ impl Api {
                 resp.msg = format!("error: {:?}", e);
                 return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
             }
-        };
-        let mut file = match File::create(format!("{}/{}", self.dir_path, hex::encode(&code))) {
-            Ok(v) => v,
-            Err(e) => {
-                resp.code = -60;
-                resp.msg = format!("save file error: {:?}", e);
-                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
-            }
-        };
-        let json = match serde_json::to_string_pretty(&req.0) {
-            Ok(v) => v,
-            Err(e) => {
-                resp.code = -70;
-                resp.msg = format!("save file error: {:?}", e);
-                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
-            }
-        };
-        if let Err(e) = file.write_all(json.as_bytes()) {
-            resp.code = -80;
-            resp.msg = format!("save file error: {:?}", e);
-            return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
         };
 
         Ok(GetIssueTxRespEnum::Ok(Json(resp)))
@@ -465,11 +446,11 @@ fn get_address_and_pub_key(
         .unwrap_or(receive_public_key);
 
     let fra_pub_key = hex::decode(s)
-        .map_err(|e| (-3, format!("error: {:?}", e)))
+        .map_err(|e| (-1, format!("error: {:?}", e)))
         .and_then(|v| {
             if v.len() != 32 {
                 Err((
-                    -1,
+                    -2,
                     format!("The length of the public key is not 32 bytes: {}", v.len()),
                 ))
             } else {
