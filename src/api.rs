@@ -1,10 +1,7 @@
-use std::str::FromStr;
-
 use {
     anyhow::anyhow,
     ethers::{
         abi::{Function, Param, ParamType, StateMutability, Token},
-        contract::{Eip712, EthAbiType},
         types::Signature,
         utils::keccak256,
     },
@@ -20,17 +17,13 @@ use {
     },
     serde::{Deserialize, Serialize},
     serde_json::Value,
-    std::{collections::HashMap, time::SystemTime},
+    std::{collections::HashMap, str::FromStr, time::SystemTime},
     web3::{
         transports::Http,
         types::{Bytes, CallRequest, H160, U256},
         Web3,
     },
-    zei::{
-        serialization::ZeiFromToBytes,
-        setup::PublicParams,
-        xfr::{asset_record::AssetRecordType, sig::XfrPublicKey},
-    },
+    zei::{setup::PublicParams, xfr::asset_record::AssetRecordType},
 };
 pub struct Api {
     pub findora_query_url: String,
@@ -64,7 +57,6 @@ pub enum PingRespEnum {
 #[derive(Serialize, Deserialize, Debug, Object, Clone)]
 pub struct GetIssueTxReq {
     pub id: String,
-    pub receive_public_key: String,
     pub signature: String,
     pub chainid: String,
     pub token_address: String,
@@ -88,12 +80,6 @@ pub enum GetIssueTxRespEnum {
 pub enum GetSupportChain {
     #[oai(status = 200)]
     Ok(Json<HashMap<String, Vec<String>>>),
-}
-
-#[derive(Eip712, EthAbiType, Clone)]
-
-struct Issue {
-    pub receive_public_key: Vec<u8>,
 }
 
 #[OpenApi]
@@ -143,15 +129,27 @@ impl Api {
             code: 0,
             msg: String::new(),
         };
-        let (address, _pub_key) =
-            match get_address_and_pub_key(&req.0.receive_public_key, &req.0.signature) {
-                Ok(v) => v,
-                Err((code, msg)) => {
-                    resp.code = code;
-                    resp.msg = msg;
-                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
-                }
-            };
+
+        let message = format!(
+            "{}{}{}{}",
+            req.0.id,
+            req.0.chainid,
+            req.0.token_address,
+            if let Some(tokenid) = req.0.tokenid1155.clone() {
+                tokenid
+            } else {
+                "null".to_string()
+            }
+        );
+
+        let address = match get_address(&message, &req.0.signature) {
+            Ok(v) => v,
+            Err((code, msg)) => {
+                resp.code = code;
+                resp.msg = msg;
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
         let chainid = match U256::from_str(&req.chainid) {
             Ok(v) => v,
             Err(e) => {
@@ -437,41 +435,17 @@ async fn get_1155_balance(
     }
 }
 
-fn get_address_and_pub_key(
-    receive_public_key: &str,
-    signature: &str,
-) -> Result<(H160, XfrPublicKey), (i32, String)> {
-    let s = receive_public_key
-        .strip_prefix("0x")
-        .unwrap_or(receive_public_key);
-
-    let fra_pub_key = hex::decode(s)
-        .map_err(|e| (-1, format!("error: {:?}", e)))
-        .and_then(|v| {
-            if v.len() != 32 {
-                Err((
-                    -2,
-                    format!("The length of the public key is not 32 bytes: {}", v.len()),
-                ))
-            } else {
-                Ok(v)
-            }
-        })?;
-
+fn get_address(message: &str, signature: &str) -> Result<H160, (i32, String)> {
     let s = signature.strip_prefix("0x").unwrap_or(signature);
     let signature = hex::decode(s)
-        .map_err(|e| (-3, format!("error: {:?}", e)))
+        .map_err(|e| (-1, format!("error: {:?}", e)))
         .and_then(|v| {
             Signature::try_from(v.as_slice()).map_err(|e| (-4, format!("error: {:?}", e)))
         })?;
 
     let address = signature
-        .recover_typed_data(&Issue {
-            receive_public_key: fra_pub_key.to_vec(),
-        })
-        .map_err(|e| (-5, format!("error: {:?}", e)))?;
+        .recover(message)
+        .map_err(|e| (-2, format!("error: {:?}", e)))?;
 
-    let pub_key =
-        XfrPublicKey::zei_from_bytes(&fra_pub_key).map_err(|e| (-6, format!("error: {:?}", e)))?;
-    Ok((address, pub_key))
+    Ok(address)
 }
