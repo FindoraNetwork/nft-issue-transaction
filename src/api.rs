@@ -57,7 +57,7 @@ pub enum PingRespEnum {
 #[derive(Serialize, Deserialize, Debug, Object, Clone)]
 pub struct GetIssueTxReq {
     pub id: String,
-    pub fra_address: String,
+    pub receive_public_key: String,
     pub signature: String,
     pub chainid: String,
     pub token_address: String,
@@ -130,7 +130,7 @@ impl Api {
             code: 0,
             msg: String::new(),
         };
-        let address = match get_address_and_pub_key(&req.0.fra_address, &req.0.signature) {
+        let address = match get_address_and_pub_key(&req.0.receive_public_key, &req.0.signature) {
             Ok(v) => v,
             Err((code, msg)) => {
                 resp.code = code;
