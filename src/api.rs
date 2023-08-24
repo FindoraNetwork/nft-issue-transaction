@@ -57,6 +57,7 @@ pub enum PingRespEnum {
 #[derive(Serialize, Deserialize, Debug, Object, Clone)]
 pub struct GetIssueTxReq {
     pub id: String,
+    pub fra_address: String,
     pub signature: String,
     pub chainid: String,
     pub token_address: String,
@@ -129,20 +130,7 @@ impl Api {
             code: 0,
             msg: String::new(),
         };
-
-        let message = format!(
-            "{}{}{}{}",
-            req.0.id,
-            req.0.chainid,
-            req.0.token_address,
-            if let Some(tokenid) = req.0.tokenid1155.clone() {
-                tokenid
-            } else {
-                "null".to_string()
-            }
-        );
-
-        let address = match get_address(&message, &req.0.signature) {
+        let address = match get_address_and_pub_key(&req.0.fra_address, &req.0.signature) {
             Ok(v) => v,
             Err((code, msg)) => {
                 resp.code = code;
@@ -435,17 +423,17 @@ async fn get_1155_balance(
     }
 }
 
-fn get_address(message: &str, signature: &str) -> Result<H160, (i32, String)> {
+fn get_address_and_pub_key(message: &str, signature: &str) -> Result<H160, (i32, String)> {
     let s = signature.strip_prefix("0x").unwrap_or(signature);
     let signature = hex::decode(s)
-        .map_err(|e| (-1, format!("error: {:?}", e)))
+        .map_err(|e| (-3, format!("error: {:?}", e)))
         .and_then(|v| {
             Signature::try_from(v.as_slice()).map_err(|e| (-4, format!("error: {:?}", e)))
         })?;
 
     let address = signature
         .recover(message)
-        .map_err(|e| (-2, format!("error: {:?}", e)))?;
+        .map_err(|e| (-5, format!("error: {:?}", e)))?;
 
     Ok(address)
 }
