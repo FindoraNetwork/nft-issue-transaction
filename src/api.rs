@@ -279,7 +279,7 @@ fn create_asset_tx(
 
     let mut builder = get_transaction_builder(url).map_err(|e| (-25, format!("error: {:?}", e)))?;
     builder
-        .add_operation_create_asset(&kp, Some(code), rules, &memo)
+        .add_operation_create_asset(&kp, Some(asset_code), rules, &memo)
         .map_err(|e| (-26, format!("error: {:?}", e)))?;
 
     builder
