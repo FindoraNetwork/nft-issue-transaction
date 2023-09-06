@@ -8,7 +8,7 @@ use {
     ethers::types::U256,
     poem::{listener::TcpListener, middleware::Cors, EndpointExt, Route, Server},
     poem_openapi::OpenApiService,
-    std::collections::HashMap,
+    std::{collections::HashMap, fs::create_dir_all, path::PathBuf},
     web3::types::H160,
     web3::{transports::Http, Web3},
 };
@@ -23,15 +23,19 @@ async fn main() -> Result<()> {
         let web3 = Web3::new(Http::new(&web3_url)?);
         support_chain.insert(web3.eth().chain_id().await?, (web3, contracts));
     }
-
+    let dir_path = PathBuf::from(config.dir_path);
+    if !dir_path.exists() {
+        create_dir_all(&dir_path)?;
+    }
     let api = Api {
         support_chain,
         findora_query_url: config.findora_query_url,
+        dir_path,
     };
     let api_service = OpenApiService::new(api, "zk-nft", "1.0").server(config.swagger_url);
     let ui = api_service.swagger_ui();
 
-    log::trace!(">>>server start<<<");
+    println!(">>>server start<<<");
     let server_addr = format!("{}:{}", config.listen_address, config.listen_port);
     Server::new(TcpListener::bind(server_addr))
         .run(

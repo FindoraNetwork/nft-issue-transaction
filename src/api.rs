@@ -10,14 +10,21 @@ use {
         data_model::{AssetRules, AssetTypeCode, AssetTypePrefix},
         store::fbnc::NumKey,
     },
-    poem::Result,
+    poem::{web::Path, Result},
     poem_openapi::{
         payload::{Json, PlainText},
         ApiResponse, Object, OpenApi, Tags,
     },
     serde::{Deserialize, Serialize},
     serde_json::Value,
-    std::{collections::HashMap, str::FromStr, time::SystemTime},
+    std::{
+        collections::HashMap,
+        fs::{read_to_string, File},
+        io::Write,
+        path::PathBuf,
+        str::FromStr,
+        time::SystemTime,
+    },
     web3::{
         transports::Http,
         types::{Bytes, CallRequest, H160, U256},
@@ -28,6 +35,7 @@ use {
 pub struct Api {
     pub findora_query_url: String,
     pub support_chain: HashMap<U256, (Web3<Http>, Vec<H160>)>,
+    pub dir_path: PathBuf,
 }
 
 #[derive(Tags)]
@@ -83,6 +91,12 @@ pub enum GetSupportChain {
     Ok(Json<HashMap<String, Vec<String>>>),
 }
 
+#[derive(ApiResponse)]
+pub enum GetIssueInfo {
+    #[oai(status = 200)]
+    Ok(Json<String>),
+}
+
 #[OpenApi]
 impl Api {
     #[oai(path = "/version", method = "get", tag = "ApiTags::Version")]
@@ -117,6 +131,18 @@ impl Api {
         }
 
         Ok(GetSupportChain::Ok(Json(chain)))
+    }
+    #[oai(
+        path = "/get_issue_info/:hex_code",
+        method = "get",
+        tag = "ApiTags::Transaction"
+    )]
+    async fn get_issue_info(&self, hex_code: Path<String>) -> Result<GetIssueInfo> {
+        let hex_code = hex_code.strip_prefix("0x").unwrap_or(&hex_code);
+        let file_name = self.dir_path.join(hex_code);
+        Ok(GetIssueInfo::Ok(Json(
+            read_to_string(file_name).unwrap_or_default(),
+        )))
     }
 
     #[oai(
@@ -209,34 +235,36 @@ impl Api {
             return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
         }
         let mut data = vec![];
-        data.extend(address.0);
-        data.extend(token_address.0);
-        let chain_id = match web3.eth().chain_id().await {
-            Ok(v) => v,
-            Err(e) => {
-                resp.code = -40;
-                resp.msg = format!("error: {:?}", e);
-                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
-            }
-        };
+        {
+            data.extend(address.0);
+            data.extend(token_address.0);
+            let chain_id = match web3.eth().chain_id().await {
+                Ok(v) => v,
+                Err(e) => {
+                    resp.code = -40;
+                    resp.msg = format!("error: {:?}", e);
+                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+                }
+            };
 
-        let mut tmp: [u8; 32] = [0; 32];
-        chain_id.to_big_endian(&mut tmp);
-        data.extend(&tmp);
-        balance.to_big_endian(&mut tmp);
-        data.extend(tmp);
-        let time = format!("{:?}", SystemTime::now());
-        data.extend(time.as_bytes());
-        let code = keccak256(data);
+            let mut tmp: [u8; 32] = [0; 32];
+            chain_id.to_big_endian(&mut tmp);
+            data.extend(&tmp);
+            balance.to_big_endian(&mut tmp);
+            data.extend(tmp);
+            let time = format!("{:?}", SystemTime::now());
+            data.extend(time.as_bytes());
+        }
 
-        let builder = match create_asset_tx(&self.findora_query_url, &code, balance.as_u64()) {
-            Ok(v) => v,
-            Err((code, msg)) => {
-                resp.code = code;
-                resp.msg = msg;
-                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
-            }
-        };
+        let (builder, asset_code) =
+            match create_asset_tx(&self.findora_query_url, &keccak256(data), balance.as_u64()) {
+                Ok(v) => v,
+                Err((code, msg)) => {
+                    resp.code = code;
+                    resp.msg = msg;
+                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+                }
+            };
         resp.msg = match serde_json::to_string(&builder) {
             Ok(v) => v,
             Err(e) => {
@@ -244,6 +272,29 @@ impl Api {
                 resp.msg = format!("error: {:?}", e);
                 return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
             }
+        };
+        let hex_code = hex::encode(&asset_code);
+        let file_name = self.dir_path.join(hex_code);
+        let mut file = match File::create(file_name) {
+            Ok(v) => v,
+            Err(e) => {
+                resp.code = -60;
+                resp.msg = format!("save file error: {:?}", e);
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
+        let json = match serde_json::to_string(&req.0) {
+            Ok(v) => v,
+            Err(e) => {
+                resp.code = -70;
+                resp.msg = format!("save file error: {:?}", e);
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
+        if let Err(e) = file.write_all(json.as_bytes()) {
+            resp.code = -80;
+            resp.msg = format!("save file error: {:?}", e);
+            return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
         };
 
         Ok(GetIssueTxRespEnum::Ok(Json(resp)))
@@ -254,7 +305,7 @@ fn create_asset_tx(
     url: &str,
     code: &[u8],
     amount: u64,
-) -> Result<TransactionBuilder, (i32, String)> {
+) -> Result<(TransactionBuilder, Vec<u8>), (i32, String)> {
     let code = AssetTypeCode::from_bytes(code).map_err(|e| (-21, format!("error: {:?}", e)))?;
 
     let asset_code =
@@ -292,7 +343,7 @@ fn create_asset_tx(
             &PublicParams::default(),
         )
         .map_err(|e| (-27, format!("error: {:?}", e)))?;
-    Ok(builder)
+    Ok((builder, asset_code.val.0.to_vec()))
 }
 
 fn get_transaction_builder(url: &str) -> anyhow::Result<TransactionBuilder> {

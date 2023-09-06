@@ -12,6 +12,7 @@ pub struct Config {
     pub listen_port: u32,
     pub findora_query_url: String,
     pub support_chain: HashMap<String, Vec<H160>>,
+    pub dir_path: String,
 }
 impl Config {
     pub fn new(path: &str) -> Result<Self> {
