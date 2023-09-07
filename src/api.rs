@@ -23,7 +23,6 @@ use {
         io::Write,
         path::PathBuf,
         str::FromStr,
-        time::SystemTime,
     },
     web3::{
         transports::Http,
@@ -69,7 +68,8 @@ pub struct GetIssueTxReq {
     pub signature: String,
     pub chainid: String,
     pub token_address: String,
-    pub tokenid1155: Option<String>,
+    pub tokenid: String,
+    pub is_721: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Object, Clone)]
@@ -195,16 +195,8 @@ impl Api {
             return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
         }
 
-        let mut balance = if let Some(id) = &req.tokenid1155 {
-            let tokenid = match U256::from_str(id) {
-                Ok(v) => v,
-                Err(e) => {
-                    resp.code = -35;
-                    resp.msg = format!("tokenid format error:{:?}", e);
-                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
-                }
-            };
-            match get_1155_balance(&web3, token_address, address, tokenid).await {
+        let mut balance = if req.is_721 {
+            match get_erc_balance(&web3, token_address, address).await {
                 Ok(v) => v,
                 Err((code, msg)) => {
                     resp.code = code;
@@ -213,7 +205,15 @@ impl Api {
                 }
             }
         } else {
-            match get_erc_balance(&web3, token_address, address).await {
+            let tokenid = match U256::from_str(&req.tokenid) {
+                Ok(v) => v,
+                Err(e) => {
+                    resp.code = -35;
+                    resp.msg = format!("tokenid format error:{:?}", e);
+                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+                }
+            };
+            match get_1155_balance(&web3, token_address, address, tokenid).await {
                 Ok(v) => v,
                 Err((code, msg)) => {
                     resp.code = code;
@@ -236,7 +236,6 @@ impl Api {
         }
         let mut data = vec![];
         {
-            data.extend(address.0);
             data.extend(token_address.0);
             let chain_id = match web3.eth().chain_id().await {
                 Ok(v) => v,
@@ -250,10 +249,6 @@ impl Api {
             let mut tmp: [u8; 32] = [0; 32];
             chain_id.to_big_endian(&mut tmp);
             data.extend(&tmp);
-            balance.to_big_endian(&mut tmp);
-            data.extend(tmp);
-            let time = format!("{:?}", SystemTime::now());
-            data.extend(time.as_bytes());
         }
 
         let (builder, asset_code) =
