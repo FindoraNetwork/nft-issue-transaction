@@ -70,6 +70,8 @@ pub struct GetIssueTxReq {
     pub token_address: String,
     pub tokenid: String,
     pub is_721: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rand_str: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Object, Clone)]
@@ -194,7 +196,14 @@ impl Api {
             resp.msg = String::from("token_address not support");
             return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
         }
-
+        let tokenid = match U256::from_str(&req.tokenid) {
+            Ok(v) => v,
+            Err(e) => {
+                resp.code = -35;
+                resp.msg = format!("tokenid format error:{:?}", e);
+                return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
+            }
+        };
         let mut balance = if req.is_721 {
             match get_erc_balance(&web3, token_address, address).await {
                 Ok(v) => v,
@@ -205,14 +214,6 @@ impl Api {
                 }
             }
         } else {
-            let tokenid = match U256::from_str(&req.tokenid) {
-                Ok(v) => v,
-                Err(e) => {
-                    resp.code = -35;
-                    resp.msg = format!("tokenid format error:{:?}", e);
-                    return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
-                }
-            };
             match get_1155_balance(&web3, token_address, address, tokenid).await {
                 Ok(v) => v,
                 Err((code, msg)) => {
@@ -245,10 +246,15 @@ impl Api {
                     return Ok(GetIssueTxRespEnum::Ok(Json(resp)));
                 }
             };
-
             let mut tmp: [u8; 32] = [0; 32];
+            tokenid.to_big_endian(&mut tmp);
+            data.extend(&tmp);
+            tmp = [0; 32];
             chain_id.to_big_endian(&mut tmp);
             data.extend(&tmp);
+            if let Some(v) = &req.rand_str {
+                data.extend(v.as_bytes());
+            }
         }
 
         let (builder, asset_code) =
