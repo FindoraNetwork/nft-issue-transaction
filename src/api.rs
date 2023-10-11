@@ -7,7 +7,7 @@ use {
     },
     finutils::txn_builder::TransactionBuilder,
     ledger::{
-        data_model::{AssetRules, AssetTypeCode, AssetTypePrefix},
+        data_model::{AssetRules, AssetTypeCode},
         store::fbnc::NumKey,
     },
     poem::{web::Path, Result},
@@ -309,8 +309,7 @@ fn create_asset_tx(
 ) -> Result<(TransactionBuilder, Vec<u8>), (i32, String)> {
     let code = AssetTypeCode::from_bytes(code).map_err(|e| (-21, format!("error: {:?}", e)))?;
 
-    let asset_code =
-        AssetTypeCode::from_prefix_and_raw_asset_type_code(AssetTypePrefix::UserDefined, &code);
+    let asset_code = get_derived_asset_code(url, &code).map_err(|e| (-21, format!("error: {:?}", e)))?;
 
     let mut rules = AssetRules::default();
     let decimal = 6;
@@ -331,7 +330,7 @@ fn create_asset_tx(
 
     let mut builder = get_transaction_builder(url).map_err(|e| (-25, format!("error: {:?}", e)))?;
     builder
-        .add_operation_create_asset(&kp, Some(asset_code), rules, &memo)
+        .add_operation_create_asset(&kp, Some(code), rules, &memo)
         .map_err(|e| (-26, format!("error: {:?}", e)))?;
 
     builder
@@ -359,6 +358,19 @@ fn get_transaction_builder(url: &str) -> anyhow::Result<TransactionBuilder> {
         })
         .map(|resp| TransactionBuilder::from_seq_id(resp.1))
 }
+
+fn get_derived_asset_code(url: &str, raw_asset_code: &AssetTypeCode) -> anyhow::Result<AssetTypeCode> {
+    let url = format!("{}/get_derived_asset_code/{}", url, raw_asset_code.to_base64());
+    attohttpc::get(&url)
+    .send()
+    .and_then(|resp| resp.error_for_status())
+    .and_then(|resp| resp.text())
+    .map_err(|e| anyhow!("{:?}", e))
+    .and_then(|str| {
+        AssetTypeCode::new_from_base64(str.as_str()).map_err(|e| anyhow!("{:?}", e))
+    })
+}
+
 async fn get_erc_balance(
     web3: &Web3<Http>,
     contract_address: H160,
